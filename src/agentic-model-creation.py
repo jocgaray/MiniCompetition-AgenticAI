@@ -1,6 +1,7 @@
 import pandas as pd
 from langchain_ollama import ChatOllama
 from langchain_core.tools import tool
+from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain.agents import create_agent
 
 # 1. Load your CSV data
@@ -38,10 +39,12 @@ def run_python_on_dataframe(code: str) -> str:
 tools = [run_python_on_dataframe]
 
 # 3. Setup ChatOllama 
+
 llm = ChatOllama(
-    model="llama3.2:latest", 
-    temperature=0
-)
+    model="qwen3.5:9b",      # Or whichever Hermes-based model you pulled
+    base_url="http://localhost:11434"
+) 
+
 
 # 4. Construct the system instructions
 system_prompt = f"""You are a data analysis assistant. You have access to a pandas DataFrame named `df`.
@@ -56,6 +59,14 @@ agent_executor = create_agent(
     model=llm,
     tools=tools,
     system_prompt=system_prompt
+)
+
+data_explorer = create_pandas_dataframe_agent(
+    llm,
+    df,
+    allow_dangerous_code=True,
+    verbose=True,
+    handle_parsing_errors=True # Crucial for local LLM stability
 )
 
 # 6. Test your query

@@ -1,0 +1,3 @@
+FROM phi4:latest
+# Set the context window to 16,384 tokens (or 32768 if you have enough RAM)
+PARAMETER num_ctx 16384
