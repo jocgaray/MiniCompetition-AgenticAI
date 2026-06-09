@@ -3,21 +3,21 @@ import asyncio
 
 import pandas as pd
 
-from src.agent_template import build_workflow
+from src.workflow import build_workflow
 
 async def run_competition_run(filepath: str):
     df = pd.read_csv(filepath)
     # Ensure your workflow is compiled
     app = build_workflow(df)
-    
+
     initial_state = {
         "raw_data": df,
         "clean_features": pd.DataFrame(),
         "predictions": None,
         "errors": [],
-        "schema_ok": False
+        "schema_ok": False,
     }
-    
+
     # Use ainvoke for asynchronous graph execution
     return await app.ainvoke(initial_state)
 
