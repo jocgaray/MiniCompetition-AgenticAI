@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from functools import partial
 from typing import List, Optional, TypedDict, cast
 
 import pandas as pd
@@ -7,12 +8,22 @@ from langchain_core.tools import tool
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field, field_validator
-from tqdm.asyncio import tqdm  # Import the async version
 
-from src.nodes import debug_node, extract_features_node
+from src.nodes import (
+    PandasTool,
+    debug_node,
+    extract_features_node,
+    validate_schema_node,
+)
+from src.schemas import SentimentAnalysis
 from src.state import AgentState
 
-lmm_model = "llama3:latest"  # "qwen3.5:9b"
+# 1. Instantiate the object, don't just assign a string
+llm_model = ChatOllama(model="llama3")
+
+# 2. Now this will work because 'llm_model' is an object, not a string
+structured_llm = llm_model.with_structured_output(SentimentAnalysis)
+
 
 # Define Structured Output for Feature Extraction
 class PropertyFeatures(BaseModel):
@@ -66,6 +77,7 @@ def train_and_predict_node(state: AgentState):
     print("--- Prediction Node Complete ---")
     return {"predictions": model.predict(X).tolist()}
 
+
 def build_workflow(df: pd.DataFrame):
     # Create the tool
     pandas_tool = PandasTool(df)
@@ -73,21 +85,17 @@ def build_workflow(df: pd.DataFrame):
     # Create a version of the node that already has the tool attached
     configured_debug_node = partial(debug_node, tool=pandas_tool)
 
+    async def extract_features_wrapper(state: AgentState):
+        # This explicitly calls your function with the injected model
+        return await extract_features_node(state, llm=structured_llm)
+
     # Add that to the workflow
-    workflow.add_node("debug", configured_debug_node)
-
-    # Define debug_node here so it captures 'pandas_tool'
-    def debug_node(state: AgentState):
-        summary = pandas_tool.query("df.columns")
-        return {"errors": state["errors"] + [f"Debug info: {summary}"]}
-
     workflow = StateGraph(AgentState)
 
     workflow.add_node("validate", validate_schema_node)
-    workflow.add_node("debug", debug_node)  # Add the new node
-    workflow.add_node("extract", extract_features_node)
+    workflow.add_node("debug", configured_debug_node)
+    workflow.add_node("extract", extract_features_wrapper)
     workflow.add_node("predict", train_and_predict_node)
-
     # Conditional Logic
     workflow.set_entry_point("validate")
     workflow.add_conditional_edges(

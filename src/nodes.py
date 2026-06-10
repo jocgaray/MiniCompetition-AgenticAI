@@ -15,10 +15,10 @@ class PandasTool:
         return str(eval(query, {"__builtins__": {}}, {"df": self.df}))
 
 
-def debug_node(state: AgentState):
+def debug_node(state: AgentState, tool: PandasTool):
     # This node can use the tool to check column names or data types
     # without needing the LLM to write the code
-    summary = pandas_tool.query.invoke("df.columns")
+    summary = tool.query.invoke("df.columns")
     return {"errors": [f"Debug info: {summary}"]}
 
 
@@ -46,14 +46,14 @@ def validate_schema_node(state: AgentState):
     }
 
 
-async def extract_features_node(state: AgentState):
+async def extract_features_node(state: AgentState, llm):
     description = state["description"]
 
     # NOW we inject the description into the template
     formatted_prompt = SENTIMENT_ANALYSIS_PROMPT.format(description=description)
 
     # Now you can send the 'formatted_prompt' to your LLM
-    result = await structured_llm.ainvoke(formatted_prompt)
+    result = await llm.ainvoke(formatted_prompt)
 
     # 3. Apply your conditional mapping logic
     score = map_label_to_score(result.label)
