@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.uv/
+*.egg-info/
+.env
+*.csv
+!Data/train.csv
+!Data/test.csv

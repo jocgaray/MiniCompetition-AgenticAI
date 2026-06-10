@@ -4,11 +4,10 @@ class AgentState(TypedDict):
     raw_data: Any
     schema_ok: bool
     errors: List[str]
+    predictions: NotRequired[list[int]]
 
-    # Use NotRequired for fields that start empty or are filled later
-    description: NotRequired[str]
-    sentiment_label: NotRequired[str]
-    sentiment_score: NotRequired[float]
-    reasoning: NotRequired[str]
-    features: NotRequired[dict]
-    clean_features: NotRequired[dict]
+    # Populated by the agent during processing
+    messages: NotRequired[list]
+    clean_features: NotRequired[Any]
+    has_region_price: NotRequired[bool]
+    has_sentiment: NotRequired[bool]

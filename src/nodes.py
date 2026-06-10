@@ -1,146 +1,140 @@
-from langchain_core.language_models.llms import LLM
+import asyncio
+import time
+
 import pandas as pd
 from langchain_core.tools import tool
-from typing import Optional
+from sklearn.ensemble import RandomForestClassifier
 
-from .schemas import  PropertyFeatures
-from .zipcode_dollars import transform_coordinates_to_price
+from .DropCols import drop_dataframe_columns
 from .logic import map_label_to_score
 from .prompts import SENTIMENT_ANALYSIS_PROMPT
+from .schemas import PropertyFeatures, SentimentAnalysis
 from .state import AgentState
+from .zipcode_dollars import get_price_from_lat_long
 
-@tool
-def run_data_cleaning(state: AgentState):
-    """Cleans the raw data. Call this when you receive new data."""
-    return data_cleaning_node(state)
 
-@tool
-def run_feature_extraction(state: AgentState, structured_llm: LLM):
-    """Extracts sentiment and luxury features from descriptions."""
-    return extract_features_node(state, llm=structured_llm)
-
-class PandasTool:
-    def __init__(self, df: pd.DataFrame):
-        self.df = df
-
+def make_data_tools(df: pd.DataFrame, structured_llm=None):
     @tool
-    def get_column_info(self):
+    def get_column_info() -> str:
         """Returns the column names and data types of the current dataframe."""
-        return str(self.df.dtypes)
+        return str(df.dtypes)
 
     @tool
-    def preview_data(self, n: int = 5):
+    def preview_data(n: int = 5) -> str:
         """Returns the first n rows of the dataframe."""
-        return self.df.head(n).to_string()
+        return df.head(n).to_string()
 
     @tool
-    def query(self, query: str):
-        # ... your existing logic ...
-        return str(eval(query, {"__builtins__": {}}, {"df": self.df}))
+    def query(query_str: str) -> str:
+        """Run a pandas expression on the dataframe for inspection. Use 'df' as table name."""
+        try:
+            allowed_names = {"df": df, "pd": pd}
+            result = eval(query_str, {"__builtins__": {}}, allowed_names)
+            return str(result)
+        except Exception as e:
+            return f"Query error: {e}"
 
-def train_and_predict_node(state: AgentState):
-    """Deterministic ML classification."""
-    print("--- Starting Prediction Node ---")
-    from sklearn.ensemble import RandomForestClassifier
+    @tool
+    def drop_columns(columns: str) -> str:
+        """Drop specified columns. Provide as comma-separated list. Example: 'neighbourhood_group, neighbourhood'"""
+        col_list = [c.strip() for c in columns.split(",")]
+        df.drop(columns=col_list, inplace=True, errors="ignore")
+        return f"Dropped columns: {col_list}"
 
-    # Ensure clean_features is a DataFrame
-    clean_df = pd.DataFrame(state["clean_features"]) if not isinstance(state["clean_features"], pd.DataFrame) else state["clean_features"]
-    
-    # Now concatenate
-    X = pd.concat(
-        [state["raw_data"].drop(columns=["description"]), clean_df],
-        axis=1
-    )
+    @tool
+    def add_region_price() -> str:
+        """Convert latitude/longitude to region_price column. Drops coordinate columns afterward."""
+        df["region_price"] = df.apply(
+            lambda row: get_price_from_lat_long(
+                float(row.get("latitude", 0)), float(row.get("longitude", 0))
+            ),
+            axis=1,
+        )
+        df.drop(columns=["latitude", "longitude"], inplace=True, errors="ignore")
+        return f"Added region_price for {len(df)} rows"
 
-    # Merge extracted features with original tabular metrics
-    y = state["raw_data"]["price_tier"]
+    @tool
+    def analyze_descriptions() -> str:
+        """Run LLM sentiment analysis on all property descriptions. Adds sentiment_score column."""
+        if structured_llm is None:
+            return "Error: LLM not configured for sentiment analysis"
 
-    model = RandomForestClassifier().fit(X, y)
-    print("--- Prediction Node Complete ---")
-    return {"predictions": model.predict(X).tolist()}
+        scores = []
+        for idx, row in df.iterrows():
+            desc = row.get("description", "")
+            if not desc or not isinstance(desc, str) or len(desc.strip()) == 0:
+                scores.append(2.5)
+                continue
+            try:
+                prompt = SENTIMENT_ANALYSIS_PROMPT.format(description=desc)
+                result = structured_llm.invoke(prompt)
+                score = map_label_to_score(result.label)
+                scores.append(score)
+            except Exception:
+                scores.append(2.5)
 
-def pre_processing_node(state: AgentState):
-    # This runs BEFORE the agent ever sees the data
-    if 'lat' in state['raw_data'].columns:
-        state['raw_data'] = transform_coordinates_to_price.invoke(state['raw_data'])
-    return state
+        df["sentiment_score"] = scores
+        avg = sum(scores) / len(scores) if scores else 0
+        return f"Analyzed {len(scores)} descriptions, mean score: {avg:.2f}"
 
-# The Agent Node
-def data_processor_node(state):
-    # This node provides the agent with the tool
-    # The agent determines if it should call 'transform_coordinates_to_price'
-    messages = state["messages"]
-    response = agent_executor.invoke({"messages": messages})
-    return {"messages": [response]}
+    return [get_column_info, preview_data, query, drop_columns, add_region_price, analyze_descriptions]
 
-def debug_node(state: AgentState, tool: PandasTool):
-    # This node can use the tool to check column names or data types
-    # without needing the LLM to write the code
-    summary = tool.query.invoke("df.columns")
-    return {"errors": [f"Debug info: {summary}"]}
 
-def validate_schema_node(state: AgentState):
-    print("--- Starting Validation Node ---")
+def get_clean_data(data: dict) -> PropertyFeatures:
+    return PropertyFeatures(**data)
 
+
+def validate_schema_node(state: AgentState) -> dict:
+    print("--- Validating Schema ---")
     df = state["raw_data"]
-    required = ["property_id", "description", "price_tier"]
+    required = ["property_id", "description", "room_type", "minimum_nights"]
     missing = [c for c in required if c not in df.columns]
 
     if missing:
         return {"errors": [f"Missing columns: {missing}"], "schema_ok": False}
 
-    # Extract the data you need from the DataFrame
-    # Assuming you are processing the first row or passing the whole DF
-    # If you are iterating, you'd pull the specific row here
-    description_text = df["description"].iloc[0]
+    print("--- Schema OK ---")
+    return {"schema_ok": True, "errors": []}
 
-    print("--- Validation Node Complete ---")
 
-    # Return the status AND the data the next node needs
-    return {
-        "schema_ok": True,
-        "description": description_text,  # <--- This solves your KeyError
-    }
+def train_and_predict_node(state: AgentState) -> dict:
+    print("--- Training & Predicting ---")
+    df = state["raw_data"]
 
-async def extract_features_node(state: AgentState, llm):
+    feature_cols = [
+        "sentiment_score",
+        "region_price",
+        "minimum_nights",
+        "number_of_reviews",
+        "calculated_host_listings_count",
+        "availability_365",
+    ]
 
-    description = state["description"]
-    formatted_prompt = SENTIMENT_ANALYSIS_PROMPT.format(description=description)
+    available = [c for c in feature_cols if c in df.columns]
 
-    # 1. Get raw LLM result
-    result = await llm.ainvoke(formatted_prompt)
+    if "price_tier" in df.columns and available:
+        train_df = df.dropna(subset=available + ["price_tier"])
+        if len(train_df) == 0:
+            return {"predictions": [], "errors": ["No training data after dropping NA"]}
 
-    # 2. Map label to float score (The most important part!)
-    score = map_label_to_score(result.label)
+        X = train_df[available]
+        y = train_df["price_tier"]
 
-    raw_data = {
-            "sentiment_score": map_label_to_score(result.label),
-            "room_type": state["data"]["room_type"],
-            "latitude": state["data"]["latitude"],
-            "longitude": state["data"]["longitude"],
-            "minimum_nights": int(state["data"]["minimum_nights"]),
-            "number_of_reviews": int(state["data"]["number_of_reviews"]),
-            "calculated_host_listings_count": int(state["data"]["calculated_host_listings_count"]),
-            "availability_365": int(state["data"]["availability_365"]),
-        }
-        
-    # 2. Validate and "Clean" everything at once
-    try:
-        clean_features = get_clean_data(raw_data)
-        return {"clean_features": clean_features}
-    except Exception as e:
-        return {"error": f"Data validation error: {e}"}
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X, y)
 
-def get_clean_data(data: dict) -> PropertyFeatures:
-    """
-    This is now your pipeline's 'Gatekeeper'.
-    If any field is invalid (e.g., room_type is wrong or availability > 365),
-    this will raise a Pydantic ValidationError.
-    """
-    return PropertyFeatures(**data)
+        pred_df = df[available].fillna(0)
+        pred_df = pred_df.reindex(columns=X.columns, fill_value=0)
+        predictions = model.predict(pred_df).tolist()
+    else:
+        predictions = []
 
-def data_cleaning_node(state):
-    # This node ensures only the relevant data columns persist in the state
-    df = state["data"]
-    cleaned_df = df.drop(columns=["neighbourhood_group", "neighbourhood"])
-    return {"data": cleaned_df}
+    print(f"--- Predictions: {len(predictions)} rows ---")
+    return {"predictions": predictions}
+
+
+def debug_node(state: AgentState) -> dict:
+    df = state.get("raw_data")
+    if df is not None:
+        return {"errors": [f"Debug - columns: {list(df.columns)}"]}
+    return {"errors": ["No data available"]}
