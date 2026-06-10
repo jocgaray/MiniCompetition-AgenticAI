@@ -3,12 +3,12 @@ import asyncio
 
 import pandas as pd
 
-from src.workflow import build_workflow
+from src.workflow import build_hybrid_workflow
 
 async def run_competition_run(filepath: str):
     df = pd.read_csv(filepath)
     # Ensure your workflow is compiled
-    app = build_workflow(df)
+    app = build_hybrid_workflow(df)
 
     initial_state = {
         "raw_data": df,

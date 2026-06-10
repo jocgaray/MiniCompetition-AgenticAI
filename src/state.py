@@ -1,6 +1,5 @@
 from typing import Any, List, NotRequired, TypedDict
 
-
 class AgentState(TypedDict):
     raw_data: Any
     schema_ok: bool
