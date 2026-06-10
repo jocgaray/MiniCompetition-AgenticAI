@@ -18,5 +18,4 @@ dependencies = [
     "tabulate>=0.10.0",
     "tqdm>=4.68.1",
     "typing>=3.10.0.0",
-    "uszipcode>=1.0.1",
 ]

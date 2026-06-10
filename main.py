@@ -1,28 +1,30 @@
-import asyncio
+import sys
 import warnings
 
 warnings.filterwarnings("ignore", message="Using slow pure-python SequenceMatcher")
 
-import pandas as pd
 
-from src.workflow import build_workflow
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: uv run python main.py [deterministic|agentic]")
+        print("  deterministic  — fast fixed pipeline (phi4 sentiment only)")
+        print("  agentic        — agent-driven pipeline (qwen3.5 decisions + tools)")
+        sys.exit(1)
 
+    mode = sys.argv[1]
 
-async def run_competition_run(filepath: str):
-    df = pd.read_csv(filepath)
-    app = build_workflow(df)
+    if mode == "deterministic":
+        from src.deterministic.evaluate import main as run
+    elif mode == "agentic":
+        from src.agentic.evaluate import main as run
+    else:
+        print(f"Unknown mode: {mode}")
+        print("Use 'deterministic' or 'agentic'")
+        sys.exit(1)
 
-    initial_state = {
-        "raw_data": df,
-        "clean_features": None,
-        "predictions": None,
-        "errors": [],
-        "schema_ok": False,
-    }
-
-    return await app.ainvoke(initial_state)
+    import asyncio
+    asyncio.run(run())
 
 
 if __name__ == "__main__":
-    result = asyncio.run(run_competition_run("Data/train.csv"))
-    print("Predictions:", result.get("predictions"))
+    main()
