@@ -1,4 +1,7 @@
 import asyncio
+import warnings
+
+warnings.filterwarnings("ignore", message="Using slow pure-python SequenceMatcher")
 
 import pandas as pd
 
