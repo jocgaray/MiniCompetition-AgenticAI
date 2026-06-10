@@ -10,37 +10,64 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
 from tqdm import tqdm
 
-POSITIVE_WORDS = {
-    "luxury", "beautiful", "stunning", "amazing", "gorgeous", "spacious",
-    "modern", "renovated", "cozy", "charming", "clean", "quiet", "safe",
-    "convenient", "bright", "comfortable", "excellent", "fantastic",
-    "perfect", "great", "nice", "lovely", "wonderful", "breathtaking",
-    "high-end", "elegant", "stylish", "updated", "new", "premium",
+NO_INTEREST = {
+    "basic", "budget", "cheap", "simple", "small", "tiny", "bare",
+    "minimal", "modest", "nothing special", "nothing fancy",
 }
 
-NEGATIVE_WORDS = {
-    "dirty", "small", "old", "broken", "noisy", "dangerous", "terrible",
-    "horrible", "awful", "bad", "disgusting", "ugly", "cramped",
-    "rundown", "shabby", "smelly", "dark", "cold", "drafty",
-    "uncomfortable", "filthy", "ugly", "worst", "poor", "disappointing",
-    "maintenance", "needs work",
+NEUTRAL = {
+    "clean", "quiet", "safe", "convenient", "functional", "comfortable",
+    "decent", "ok", "fine", "average", "standard", "typical",
 }
 
+SOME_APPEAL = {
+    "cozy", "nice", "good", "great", "spacious", "bright", "comfy",
+    "well-maintained", "well-equipped", "good location", "close to",
+    "friendly", "welcome", "enjoy", "relax",
+}
 
-def compute_sentiment(desc: str) -> float:
-    if not desc or not isinstance(desc, str) or len(desc.strip()) == 0:
-        return 2.5
-    words = set(re.findall(r"[a-z]+(?:-[a-z]+)?", desc.lower()))
-    pos = len(words & POSITIVE_WORDS)
-    neg = len(words & NEGATIVE_WORDS)
-    total = pos + neg
-    if total == 0:
-        return 2.5
-    ratio = pos / total
-    return round(ratio * 5.0, 2)
+INTERESTED = {
+    "beautiful", "lovely", "charming", "stylish", "modern", "renovated",
+    "updated", "elegant", "gorgeous", "stunning", "amazing", "wonderful",
+    "fantastic", "excellent", "perfect", "ideal", "warm", "inviting",
+}
 
+MUST_SEE = {
+    "luxury", "luxurious", "high-end", "premium", "designer", "penthouse",
+    "breathtaking", "exquisite", "impeccable", "spectacular", "magnificent",
+    "one-of-a-kind", "unique", "exceptional", "outstanding", "incredible",
+    "unforgettable",
+}
+
+LABEL_MAP = {
+    "no_interest": 0.0,
+    "neutral": 1.25,
+    "some_appeal": 2.5,
+    "interested": 3.75,
+    "must_see": 5.0,
+}
+
+LABEL_LISTS = [
+    ("no_interest", NO_INTEREST),
+    ("neutral", NEUTRAL),
+    ("some_appeal", SOME_APPEAL),
+    ("interested", INTERESTED),
+    ("must_see", MUST_SEE),
+]
 
 CLASS_NAMES = ["Budget", "Standard", "Premium", "Ultra-Luxury"]
+
+
+def compute_appeal(desc: str) -> float:
+    if not desc or not isinstance(desc, str) or len(desc.strip()) == 0:
+        return 2.5
+    desc_lower = desc.lower()
+    best_score = 2.5
+    for label, words in LABEL_LISTS:
+        for word in words:
+            if word in desc_lower:
+                best_score = max(best_score, LABEL_MAP[label])
+    return best_score
 
 
 def print_truth_table(y_true, y_pred):
@@ -103,14 +130,14 @@ def run_pipeline(df_input: pd.DataFrame, model=None) -> tuple[list[int], pd.Data
 
     t0 = time.time()
     scores = []
-    for _, row in tqdm(df.iterrows(), total=len(df), desc="Sentiment", unit="row"):
-        scores.append(compute_sentiment(row.get("description", "")))
-    df["sentiment_score"] = scores
-    timings["Sentiment"] = time.time() - t0
-    print(f"  [{timings['Sentiment']:.2f}s] Sentiment analysis")
+    for _, row in tqdm(df.iterrows(), total=len(df), desc="Appeal", unit="row"):
+        scores.append(compute_appeal(row.get("description", "")))
+    df["appeal_score"] = scores
+    timings["Appeal"] = time.time() - t0
+    print(f"  [{timings['Appeal']:.2f}s] Appeal classification")
 
     feature_cols = [
-        "sentiment_score",
+        "appeal_score",
         "latitude",
         "longitude",
         "room_Private_room",

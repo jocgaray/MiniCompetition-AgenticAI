@@ -17,41 +17,67 @@ from src.agentic.prompts import SYSTEM_INSTRUCTIONS
 
 llm_model = ChatOllama(model="qwen3.5:9b", temperature=0)
 
-POSITIVE_WORDS = {
-    "luxury", "beautiful", "stunning", "amazing", "gorgeous", "spacious",
-    "modern", "renovated", "cozy", "charming", "clean", "quiet", "safe",
-    "convenient", "bright", "comfortable", "excellent", "fantastic",
-    "perfect", "great", "nice", "lovely", "wonderful", "breathtaking",
-    "high-end", "elegant", "stylish", "updated", "new", "premium",
+NO_INTEREST = {
+    "basic", "budget", "cheap", "simple", "small", "tiny", "bare",
+    "minimal", "modest", "nothing special", "nothing fancy",
 }
 
-NEGATIVE_WORDS = {
-    "dirty", "small", "old", "broken", "noisy", "dangerous", "terrible",
-    "horrible", "awful", "bad", "disgusting", "ugly", "cramped",
-    "rundown", "shabby", "smelly", "dark", "cold", "drafty",
-    "uncomfortable", "filthy", "worst", "poor", "disappointing",
-    "maintenance", "needs work",
+NEUTRAL = {
+    "clean", "quiet", "safe", "convenient", "functional", "comfortable",
+    "decent", "ok", "fine", "average", "standard", "typical",
 }
 
+SOME_APPEAL = {
+    "cozy", "nice", "good", "great", "spacious", "bright", "comfy",
+    "well-maintained", "well-equipped", "good location", "close to",
+    "friendly", "welcome", "enjoy", "relax",
+}
 
-def compute_sentiment(desc: str) -> float:
-    if not desc or not isinstance(desc, str) or len(desc.strip()) == 0:
-        return 2.5
-    words = set(re.findall(r"[a-z]+(?:-[a-z]+)?", desc.lower()))
-    pos = len(words & POSITIVE_WORDS)
-    neg = len(words & NEGATIVE_WORDS)
-    total = pos + neg
-    if total == 0:
-        return 2.5
-    ratio = pos / total
-    return round(ratio * 5.0, 2)
+INTERESTED = {
+    "beautiful", "lovely", "charming", "stylish", "modern", "renovated",
+    "updated", "elegant", "gorgeous", "stunning", "amazing", "wonderful",
+    "fantastic", "excellent", "perfect", "ideal", "warm", "inviting",
+}
 
+MUST_SEE = {
+    "luxury", "luxurious", "high-end", "premium", "designer", "penthouse",
+    "breathtaking", "exquisite", "impeccable", "spectacular", "magnificent",
+    "one-of-a-kind", "unique", "exceptional", "outstanding", "incredible",
+    "unforgettable",
+}
+
+LABEL_MAP = {
+    "no_interest": 0.0,
+    "neutral": 1.25,
+    "some_appeal": 2.5,
+    "interested": 3.75,
+    "must_see": 5.0,
+}
+
+LABEL_LISTS = [
+    ("no_interest", NO_INTEREST),
+    ("neutral", NEUTRAL),
+    ("some_appeal", SOME_APPEAL),
+    ("interested", INTERESTED),
+    ("must_see", MUST_SEE),
+]
 
 CLASS_NAMES = ["Budget", "Standard", "Premium", "Ultra-Luxury"]
 
 
+def compute_appeal(desc: str) -> float:
+    if not desc or not isinstance(desc, str) or len(desc.strip()) == 0:
+        return 2.5
+    desc_lower = desc.lower()
+    best_score = 2.5
+    for label, words in LABEL_LISTS:
+        for word in words:
+            if word in desc_lower:
+                best_score = max(best_score, LABEL_MAP[label])
+    return best_score
+
+
 def print_truth_table(y_true, y_pred):
-    print("--- Truth Table (Row %) ---")
     cm = confusion_matrix(y_true, y_pred)
     labels = sorted(set(y_true) | set(y_pred))
     cm_pct = cm.astype("float") / cm.sum(axis=1, keepdims=True) * 100
@@ -86,7 +112,6 @@ def print_metrics_summary(y_true, y_pred):
 
 
 def make_agent_tools(df: pd.DataFrame):
-    timings = {}
 
     @tool
     def get_column_info() -> str:
@@ -123,19 +148,19 @@ def make_agent_tools(df: pd.DataFrame):
         return "One-hot encoded room_type into room_Private_room, room_Shared_room, room_Entire_home_apt"
 
     @tool
-    def analyze_sentiment() -> str:
-        """Analyze the sentiment of all property descriptions using keyword scoring. Adds sentiment_score column (0.0–5.0)."""
+    def analyze_appeal() -> str:
+        """Classify each property description on a purchase-intent scale. Adds appeal_score column (0.0–5.0) where higher means more compelling to book."""
         t0 = time.time()
         scores = []
-        for _, row in tqdm(df.iterrows(), total=len(df), desc="Sentiment", unit="row"):
-            scores.append(compute_sentiment(row.get("description", "")))
-        df["sentiment_score"] = scores
+        for _, row in tqdm(df.iterrows(), total=len(df), desc="Appeal", unit="row"):
+            scores.append(compute_appeal(row.get("description", "")))
+        df["appeal_score"] = scores
         avg = sum(scores) / len(scores) if scores else 0
         elapsed = time.time() - t0
-        print(f"  [{elapsed:.2f}s] Sentiment — mean: {avg:.2f}")
-        return f"Sentiment analysis complete. Mean score: {avg:.2f}"
+        print(f"  [{elapsed:.2f}s] Appeal — mean: {avg:.2f}")
+        return f"Appeal classification complete. Mean score: {avg:.2f}"
 
-    return [get_column_info, preview_data, drop_dataframe_columns, encode_room_type, analyze_sentiment]
+    return [get_column_info, preview_data, drop_dataframe_columns, encode_room_type, analyze_appeal]
 
 
 async def run_pipeline(df_input: pd.DataFrame, model=None, train_mode=False) -> tuple[list[int], pd.DataFrame]:
@@ -152,10 +177,10 @@ async def run_pipeline(df_input: pd.DataFrame, model=None, train_mode=False) -> 
         input_msg = (
             "I have a dataset of NYC Airbnb listings loaded. "
             "Inspect it, clean unnecessary columns, encode room types, "
-            "and analyze the descriptions. Report progress at each step."
+            "and classify the descriptions for appeal. Report progress at each step."
         )
         await agent.ainvoke({"messages": [("human", input_msg)]})
-    elif "sentiment_score" not in df.columns:
+    elif "appeal_score" not in df.columns:
         t0 = time.time()
         for col in ["neighbourhood_group", "neighbourhood"]:
             if col in df.columns:
@@ -173,15 +198,15 @@ async def run_pipeline(df_input: pd.DataFrame, model=None, train_mode=False) -> 
 
         t0 = time.time()
         scores = []
-        for _, row in tqdm(df.iterrows(), total=len(df), desc="Sentiment", unit="row"):
-            scores.append(compute_sentiment(row.get("description", "")))
-        df["sentiment_score"] = scores
+        for _, row in tqdm(df.iterrows(), total=len(df), desc="Appeal", unit="row"):
+            scores.append(compute_appeal(row.get("description", "")))
+        df["appeal_score"] = scores
         avg = sum(scores) / len(scores) if scores else 0
-        print(f"  [{time.time()-t0:.2f}s] Sentiment — mean: {avg:.2f}")
+        print(f"  [{time.time()-t0:.2f}s] Appeal — mean: {avg:.2f}")
     total_time = time.time() - t_start
 
     feature_cols = [
-        "sentiment_score",
+        "appeal_score",
         "latitude",
         "longitude",
         "room_Private_room",
